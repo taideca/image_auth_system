@@ -2,9 +2,17 @@ let video, cap, src, dst, gray, edges, templateMat;
 let isRunning = false;
 let isMatched = false;
 
-// 1. OpenCV.js読み込み完了時の処理
+// 1. OpenCV.js読み込み完了時の処理（修正版）
 function onOpenCvReady() {
-  document.getElementById('status').innerText = 'カメラを起動中...';
+  // OpenCVの内部システム(WebAssembly)の準備が完了するまで待つ
+  cv['onRuntimeInitialized'] = () => {
+    document.getElementById('status').innerText = 'カメラを起動中...';
+    startCamera();
+  };
+}
+
+// カメラを起動する処理を切り出し
+function startCamera() {
   video = document.getElementById('videoInput');
 
   // スマホの背面カメラを優先して起動
