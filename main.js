@@ -16,7 +16,7 @@ function onOpenCvReady() {
     isReady = true;
 
     // サーバー上の正解画像を自動ロード
-    loadCorrectImage('img/template.jpg');
+    loadCorrectImage('template.png');
 }
 
 // 2. 固定の正解画像を読み込んで特徴点を抽出する
