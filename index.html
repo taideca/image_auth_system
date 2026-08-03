@@ -13,8 +13,23 @@
         .fail { background: #f8d7da; color: #721c24; }
         .loading { background: #fff3cd; color: #856404; }
     </style>
-    <!-- OpenCV.js の読み込み -->
-    <script async src="https://opencv.org" id="opencv-js" onload="onOpenCvReady();"></script>
+    
+    <!-- エラーを画面に強制表示するスクリプト -->
+    <script>
+        window.onerror = function(message, source, lineno, colno, error) {
+            const statusDiv = document.getElementById('status');
+            if (statusDiv) {
+                statusDiv.innerText = "エラー発生: " + message + " (Line: " + lineno + ")";
+                statusDiv.className = "fail";
+            }
+            return false;
+        };
+    </script>
+
+    <!-- OpenCV.js の読み込み（読み込みエラー時も画面に表示） -->
+    <script async src="https://opencv.org" id="opencv-js" 
+            onload="onOpenCvReady();" 
+            onerror="document.getElementById('status').innerText='OpenCV.jsのダウンロードに失敗しました'; document.getElementById('status').className='fail';"></script>
 </head>
 <body>
 
@@ -22,12 +37,10 @@
     <h2>📷 リアルタイム画像照合</h2>
     <div id="status" class="loading">システム起動中...</div>
 
-    <!-- カメラ映像と判定表示用のキャンバス -->
     <video id="video" autoplay playsinline style="display:none;"></video>
     <canvas id="outputCanvas"></canvas>
 </div>
 
-<!-- 外部JavaScriptファイルの読み込み -->
 <script src="main.js"></script>
 </body>
 </html>
