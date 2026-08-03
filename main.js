@@ -1,138 +1,105 @@
-let src, gray, orb, matcher;
-let kp_correct, des_correct;
-let isReady = false;
-let isCorrectImageLoaded = false;
-
 const statusDiv = document.getElementById('status');
 const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const context = canvas.getContext('2d');
 
-// 1. OpenCV.jsの読み込み完了時に実行される関数
-function onOpenCvReady() {
-    statusDiv.innerText = "正解データを読み込み中...";
-    
-    // ORB検出器とマッチング器の初期化
-    orb = new cv.ORB();
-    matcher = new cv.BFMatcher(cv.NORM_HAMMING, true);
-    isReady = true;
+let correctFeatures = null;
+let isLockedPass = false;
 
-    // サーバー上の正解画像を自動ロード
-    loadCorrectImage('template.png');
-}
+// リセットボタンを自動生成
+createResetButton();
 
-// 2. 固定の正解画像を読み込んで特徴点を抽出する
-function loadCorrectImage(imagePath) {
-    let imgElement = new Image();
-    imgElement.src = imagePath;
-    
-    imgElement.onload = function() {
-        try {
-            let srcCorrect = cv.imread(imgElement);
-            let grayCorrect = new cv.Mat();
-            cv.cvtColor(srcCorrect, grayCorrect, cv.COLOR_RGBA2GRAY);
-            
-            kp_correct = new cv.KeyPointVector();
-            des_correct = new cv.Mat();
-            
-            // 正解画像の特徴点を抽出してメモリに保存
-            orb.detectAndCompute(grayCorrect, new cv.Mat(), kp_correct, des_correct);
-            
-            // 使用済みのテンポラリメモリを解放
-            srcCorrect.delete(); 
-            grayCorrect.delete();
-            
-            isCorrectImageLoaded = true;
-            statusDiv.innerText = "カメラを起動中...";
-            startCamera();
-        } catch (err) {
-            statusDiv.innerText = "正解画像の解析に失敗しました。";
-            statusDiv.className = "fail";
-            console.error(err);
-        }
-    };
+// ★GitHub Pagesのパス（必ず「/あなたのリポジトリ名/」に書き換えてください）
+const REPO_NAME = "/image_auth_system/"; 
 
-    imgElement.onerror = function() {
-        statusDiv.innerText = "エラー: img/correct.jpg が見つかりません。";
+// 1. サーバー上の正解画像をロード
+const img = new Image();
+img.src = REPO_NAME + 'template.png';
+
+img.onload = function() {
+    try {
+        context.drawImage(img, 0, 0, 320, 240);
+        const imageData = context.getImageData(0, 0, 320, 240);
+        const gray = tracking.Image.grayscale(imageData.data, 320, 240);
+        const corners = tracking.Fast.getCornerPoints(gray, 320, 240);
+        
+        // 特徴点を抽出して保存
+        correctFeatures = tracking.Brief.getDescriptors(gray, 320, corners);
+        
+        statusDiv.innerText = "カメラを起動中...";
+        startCamera();
+    } catch(err) {
+        statusDiv.innerText = "❌ 正解画像の解析（tracking.js）に失敗しました: " + err.message;
         statusDiv.className = "fail";
-    };
-}
+    }
+};
 
-// 3. スマホの背面カメラを起動
+img.onerror = function() {
+    statusDiv.innerText = "❌ 画像が見つかりません: " + img.src;
+    statusDiv.className = "fail";
+};
+
+// 2. カメラ起動とトラッキング開始
 function startCamera() {
-    navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: "environment" }, // 背面カメラを指定
-        audio: false 
-    })
-    .then((stream) => {
-        video.srcObject = stream;
-        video.addEventListener('canplay', () => {
-            // カメラ映像のサイズに合わせて処理用Mat（行列）を初期化
-            src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-            gray = new cv.Mat();
-            statusDiv.innerText = "判定中...";
-            statusDiv.className = "loading";
-            requestAnimationFrame(processVideo);
-        });
-    })
-    .catch((err) => {
-        statusDiv.innerText = "カメラの起動に失敗しました。アクセスを許可してください。";
+    statusDiv.innerText = "判定中...";
+    statusDiv.className = "loading";
+
+    // リアルタイムトラッカーの定義
+    const ImageTracker = function() {
+        ImageTracker.prototype.track = function(pixels, width, height) {
+            if (isLockedPass || !correctFeatures) return;
+
+            try {
+                const gray = tracking.Image.grayscale(pixels, width, height);
+                const corners = tracking.Fast.getCornerPoints(gray, width, height);
+                const currentFeatures = tracking.Brief.getDescriptors(gray, width, corners);
+                
+                // 特徴点マッチングの計算
+                const matches = tracking.Brief.reciprocalMatch(correctFeatures, currentFeatures);
+                let matchCount = matches.length;
+                
+                // 20個以上一致でPASS判定（状況に合わせて数値を調整してください）
+                if (matchCount >= 20) { 
+                    isLockedPass = true;
+                    if (navigator.vibrate) navigator.vibrate(200);
+
+                    statusDiv.innerText = `🎉 一致 (PASS) [Matches: ${matchCount}]`;
+                    statusDiv.className = "pass";
+                    document.getElementById('resetBtn').style.display = "block";
+                } else {
+                    statusDiv.innerText = `❌ 不一致 (FAIL) [Matches: ${matchCount}]`;
+                    statusDiv.className = "fail";
+                }
+            } catch(e) {
+                statusDiv.innerText = "🚨 計算エラー: " + e.message;
+                statusDiv.className = "fail";
+            }
+        };
+    };
+    tracking.inherits(ImageTracker, tracking.Tracker);
+
+    const myTracker = new ImageTracker();
+    
+    // tracking.jsでWebカメラを起動して追跡開始
+    tracking.track('#video', myTracker, { camera: true })
+    .on('error', function(event) {
+        statusDiv.innerText = "❌ カメラの追跡エラーが発生しました: " + event.message;
         statusDiv.className = "fail";
-        console.error(err);
     });
 }
 
-// 4. 毎フレームのリアルタイム画像処理ループ
-function processVideo() {
-    if (!isCorrectImageLoaded) return;
-
-    let cap = new cv.VideoCapture(video);
-    cap.read(src); // 現在のカメラフレームをsrcに読み込み
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
-    let kp_captured = new cv.KeyPointVector();
-    let des_captured = new cv.Mat();
-    orb.detectAndCompute(gray, new cv.Mat(), kp_captured, des_captured);
-
-    let isMatch = false;
-    let matchCount = 0;
-
-    // 特徴点のマッチング計算
-    if (!des_captured.empty() && !des_correct.empty()) {
-        let matches = new cv.DMatchVector();
-        try {
-            matcher.match(des_correct, des_captured, matches);
-            
-            // 良いマッチ（距離が近い＝形が似ている特徴点）をカウント
-            for (let i = 0; i < matches.size(); i++) {
-                if (matches.get(i).distance < 45) { // しきい値（判定の厳しさ：数字が小さいほど厳格）
-                    matchCount++;
-                }
-            }
-            // 15個以上の特徴点が一致したら「合格」
-            if (matchCount >= 15) { // 必要マッチ数（数字が大きいほど厳格）
-                isMatch = true;
-            }
-        } catch(e) {
-            console.error(e);
-        }
-        matches.delete();
-    }
-
-    // 判定結果をUIに反映
-    if (isMatch) {
-        statusDiv.innerText = `🎉 一致 (PASS) [Matches: ${matchCount}]`;
-        statusDiv.className = "pass";
-    } else {
-        statusDiv.innerText = `❌ 不一致 (FAIL) [Matches: ${matchCount}]`;
-        statusDiv.className = "fail";
-    }
-
-    // 画面の描画更新（映像を表示）
-    cv.imshow('outputCanvas', src);
-
-    // ループ内でのメモリリークを防ぐため、毎フレームのMatを解放
-    kp_captured.delete();
-    des_captured.delete();
-
-    // 次のフレームの処理を予約（ループ実行）
-    requestAnimationFrame(processVideo);
+// 3. リセットボタンの作成
+function createResetButton() {
+    const btn = document.createElement('button');
+    btn.id = "resetBtn";
+    btn.innerText = "🔄 判定をリセットして再開";
+    btn.style.cssText = "display:none; margin: 15px auto; padding: 12px 24px; font-size: 1rem; font-weight: bold; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer;";
+    
+    btn.onclick = function() {
+        isLockedPass = false;
+        btn.style.display = "none";
+        statusDiv.innerText = "判定中...";
+        statusDiv.className = "loading";
+    };
+    statusDiv.parentNode.insertBefore(btn, statusDiv.nextSibling);
 }
