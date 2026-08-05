@@ -1,0 +1,48 @@
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: #333;
+  color: white;
+  font-family: sans-serif;
+}
+
+#status {
+  padding: 10px;
+  font-size: 16px;
+}
+
+/* スコア表示用 */
+#score-board {
+  padding: 10px 20px;
+  font-size: 24px;
+  font-weight: bold;
+  background: #222;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  border: 2px solid #555;
+}
+
+#canvasOutput {
+  max-width: 100%;
+  height: auto;
+  border: 2px solid #555;
+}
+
+/* 判定成功時のポップアップテキスト */
+#success-ui {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 20px 40px;
+  background: rgba(76, 175, 80, 0.9); /* 少し透過させた緑色 */
+  border-radius: 8px;
+  font-size: 24px;
+  font-weight: bold;
+  text-align: center;
+  z-index: 1000;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
