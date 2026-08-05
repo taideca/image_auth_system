@@ -178,28 +178,42 @@ function warpPerspective(srcMat, corners, width, height) {
   return warped;
 }
 
-// 6. 画像の照合処理
+// 6. 画像の照合処理（位置ズレ許容版）
 function checkMatch(warpedMat) {
   let warpedGray = new cv.Mat();
   cv.cvtColor(warpedMat, warpedGray, cv.COLOR_RGBA2GRAY);
-  let roiRect = new cv.Rect(20, 20, 100, 100); 
+
+  // 切り抜く範囲(ROI)を 140x140 に広げる
+  // 元々は x:20, y:20 から 100x100 でしたが、
+  // x:0, y:0 から 140x140 の範囲を切り取ることで、上下左右に20pxの余裕を持たせます。
+  let roiRect = new cv.Rect(0, 0, 140, 140);
+  
+  // ※もし枠線の黒い部分が映り込んで邪魔になる場合は、
+  // x:5, y:5, width: 130, height: 130 のように少し内側に絞って調整してください。
   let roi = warpedGray.roi(roiRect);
 
   for (let i = 0; i < targetData.length; i++) {
     let target = targetData[i];
 
-    // すでに正解済みの画像はスキップ（重複判定防止）
     if (matchedNames.has(target.name)) continue;
 
     let result = new cv.Mat();
+    // 140x140の範囲(roi)の中から、100x100の正解画像(target.mat)が
+    // どこにいるかをスライドさせながら一番一致する場所を探します
     cv.matchTemplate(roi, target.mat, result, cv.TM_CCOEFF_NORMED);
+    
+    // minMaxLocで「最も一致度が高かった場所とそのスコア」を取得
     let minMax = cv.minMaxLoc(result);
     result.delete();
 
-    // 一致した時の処理
-    if (minMax.maxVal > 0.8) {
-      matchedNames.add(target.name); // 正解リストに追加
+    // 【修正点2】閾値を 0.8 から 0.7 に少し下げて、縮尺のズレ（ボヤけ）も許容する
+    if (minMax.maxVal > 0.7) {
+      matchedNames.add(target.name);
       updateScoreUI();
+      
+      // デバッグ用: 一致したスコアをコンソールに表示（調整時の参考にしてください）
+      console.log(`${target.name} を発見！ スコア: ${minMax.maxVal.toFixed(3)}`);
+      
       showSuccessPopup(`「${target.name}」を発見！`);
       break; 
     }
