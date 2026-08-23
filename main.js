@@ -68,13 +68,21 @@ function startCamera() {
     .then(function(stream) {
       video.srcObject = stream;
       video.play();
-      // 動画の実際の解像度が確定してから初期化を行う
+      
+      // 動画のメタデータが読み込まれたら
       video.onloadedmetadata = () => {
-        initOpenCV();
+        // スマホによっては videoWidth がすぐに取得できないため、取得できるまで待機する
+        let checkVideoSize = setInterval(() => {
+          if (video.videoWidth > 0 && video.videoHeight > 0) {
+            clearInterval(checkVideoSize);
+            initOpenCV(); // サイズが確定したら初期化スタート
+          }
+        }, 100);
       };
     })
     .catch(function(err) {
       document.getElementById('status').innerText = 'カメラのアクセスに失敗しました';
+      console.error(err);
     });
 }
 
