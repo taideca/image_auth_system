@@ -9,14 +9,19 @@
 <body>
   <div id="status">OpenCV.jsを読み込み中...</div>
   
-  <!-- スコア表示領域 -->
   <div id="score-board">正解数: 0 / 0</div>
   
-  <video id="videoInput" width="640" height="480" autoplay playsinline style="display:none;"></video>
-  <canvas id="canvasOutput" width="640" height="480"></canvas>
+  <!-- カメラ映像を表示するコンテナ -->
+  <div id="canvas-container">
+    <video id="videoInput" playsinline style="display:none;"></video>
+    <canvas id="canvasOutput"></canvas>
+    
+    <!-- 成功/失敗時に表示するテキスト -->
+    <div id="success-ui"></div>
+  </div>
 
-  <!-- 成功時に一時表示するテキスト（ボタンは削除） -->
-  <div id="success-ui"></div>
+  <!-- 決定ボタン（初期状態は無効化） -->
+  <button id="capture-btn" disabled>判定する</button>
 
   <script src="main.js"></script>
   <script async src="opencv.js" onload="onOpenCvReady();"></script>
