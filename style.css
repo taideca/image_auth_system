@@ -13,7 +13,6 @@ body {
   font-size: 16px;
 }
 
-/* スコア表示用 */
 #score-board {
   padding: 10px 20px;
   font-size: 24px;
@@ -24,13 +23,45 @@ body {
   border: 2px solid #555;
 }
 
-#canvasOutput {
-  max-width: 100%;
-  height: auto;
-  border: 2px solid #555;
+/* カメラ映像のコンテナ */
+#canvas-container {
+  width: 100%;
+  max-width: 600px; /* スマホやPCでの最大幅 */
+  position: relative;
 }
 
-/* 判定成功時のポップアップテキスト */
+/* キャンバスを横に引き伸ばさず、縦横比を維持する設定 */
+#canvasOutput {
+  width: 100%;
+  height: auto;
+  display: block;
+  border: 2px solid #555;
+  box-sizing: border-box;
+}
+
+/* 判定するボタンのデザイン */
+#capture-btn {
+  padding: 15px 40px;
+  font-size: 22px;
+  font-weight: bold;
+  margin-top: 20px;
+  margin-bottom: 20px;
+  background: #2196F3;
+  color: white;
+  border: none;
+  border-radius: 30px;
+  cursor: pointer;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+  transition: background 0.3s;
+}
+
+/* 枠が見つかっていない時のボタン（グレーアウト） */
+#capture-btn:disabled {
+  background: #777;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 #success-ui {
   display: none;
   position: absolute;
@@ -38,11 +69,11 @@ body {
   left: 50%;
   transform: translate(-50%, -50%);
   padding: 20px 40px;
-  background: rgba(76, 175, 80, 0.9); /* 少し透過させた緑色 */
   border-radius: 8px;
   font-size: 24px;
   font-weight: bold;
   text-align: center;
   z-index: 1000;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+  color: white;
 }
