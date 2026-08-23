@@ -53,6 +53,8 @@ function loadImageAsMat(url) {
     img.onload = () => {
       let mat = cv.imread(img);
       cv.cvtColor(mat, mat, cv.COLOR_RGBA2GRAY);
+      // 画像を線画（エッジ）に変換し、背景を黒にする
+      cv.Canny(mat, mat, 50, 150);
       resolve(mat);
     };
     img.onerror = () => reject(new Error("Load error"));
@@ -192,6 +194,10 @@ function checkMatch(warpedMat) {
   // x:5, y:5, width: 130, height: 130 のように少し内側に絞って調整してください。
   let roi = warpedGray.roi(roiRect);
 
+  // カメラから切り抜いた画像も線画（エッジ）に変換する
+  let roiEdges = new cv.Mat();
+  cv.Canny(roi, roiEdges, 50, 150);
+
   for (let i = 0; i < targetData.length; i++) {
     let target = targetData[i];
 
@@ -200,25 +206,25 @@ function checkMatch(warpedMat) {
     let result = new cv.Mat();
     // 140x140の範囲(roi)の中から、100x100の正解画像(target.mat)が
     // どこにいるかをスライドさせながら一番一致する場所を探します
-    cv.matchTemplate(roi, target.mat, result, cv.TM_CCOEFF_NORMED);
+    cv.matchTemplate(roiEdges, target.mat, result, cv.TM_CCOEFF_NORMED);
     
     // minMaxLocで「最も一致度が高かった場所とそのスコア」を取得
     let minMax = cv.minMaxLoc(result);
     result.delete();
 
-    // 【修正点2】閾値を 0.8 から 0.7 に少し下げて、縮尺のズレ（ボヤけ）も許容する
-    if (minMax.maxVal > 0.7) {
+    // 【重要】線画マッチングは判定が厳しくなるため、閾値を 0.7 から 0.5 程度に下げます
+    // ※うまく反応しない場合は 0.4 や 0.45 に調整してください
+    if (minMax.maxVal > 0.5) {
       matchedNames.add(target.name);
       updateScoreUI();
       
-      // デバッグ用: 一致したスコアをコンソールに表示（調整時の参考にしてください）
       console.log(`${target.name} を発見！ スコア: ${minMax.maxVal.toFixed(3)}`);
-      
       showSuccessPopup(`「${target.name}」を発見！`);
       break; 
     }
   }
-  warpedGray.delete(); roi.delete();
+  warpedGray.delete(); 
+  roiEdges.delete();
 }
 
 // HTMLのスコア表示を更新する関数
