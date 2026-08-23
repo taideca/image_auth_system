@@ -1,9 +1,10 @@
 let video, cap, src, dst, gray, edges;
-let targetData = []; // 読み込んだ画像データと名前をセットで管理
-let matchedNames = new Set(); // 既に正解した画像の名前を記録（重複防止）
+let targetData = [];
+let matchedNames = new Set();
 let totalTargets = 0;
 let isRunning = false;
-let isCooldown = false; // 連続でマッチング反応するのを防ぐフラグ
+let isCooldown = false;
+let currentCorners = null; // 現在のフレームで検出されている枠の四隅座標
 
 // 1. OpenCV.js読み込み完了時の処理
 function onOpenCvReady() {
@@ -16,15 +17,13 @@ function onOpenCvReady() {
 // 2. JSONファイルからリストを取得し、画像を読み込む
 async function loadTargetsAndStart() {
   try {
-    // targets.json を取得
     const response = await fetch('targets.json');
     const targetNames = await response.json();
     totalTargets = targetNames.length;
     updateScoreUI();
 
-    // 取得した名前リストをもとに画像を読み込む
     for (const name of targetNames) {
-      const path = `img/${name}.png`; // フォルダと拡張子を自動付与
+      const path = `img/${name}.png`; 
       try {
         const mat = await loadImageAsMat(path);
         targetData.push({ name: name, mat: mat });
@@ -46,15 +45,14 @@ async function loadTargetsAndStart() {
   }
 }
 
-// 画像パスからcv.Matを生成する関数
+// 画像を読み込み、線画（エッジ）に変換する関数
 function loadImageAsMat(url) {
   return new Promise((resolve, reject) => {
     let img = new Image();
     img.onload = () => {
       let mat = cv.imread(img);
       cv.cvtColor(mat, mat, cv.COLOR_RGBA2GRAY);
-      // 画像を線画（エッジ）に変換し、背景を黒にする
-      cv.Canny(mat, mat, 50, 150);
+      cv.Canny(mat, mat, 50, 150); 
       resolve(mat);
     };
     img.onerror = () => reject(new Error("Load error"));
@@ -65,11 +63,13 @@ function loadImageAsMat(url) {
 // 3. カメラの起動
 function startCamera() {
   video = document.getElementById('videoInput');
-  navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: 640, height: 480 }, audio: false })
+  // 理想の解像度を指定し、スマホの縦横に柔軟に対応させる
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
     .then(function(stream) {
       video.srcObject = stream;
       video.play();
-      video.oncanplay = () => {
+      // 動画の実際の解像度が確定してから初期化を行う
+      video.onloadedmetadata = () => {
         initOpenCV();
       };
     })
@@ -80,18 +80,30 @@ function startCamera() {
 
 // 4. 画像処理変数の初期化とループ開始
 function initOpenCV() {
-  src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-  dst = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+  // カメラが実際に取得した解像度を取得（縦伸び・横伸びを防止）
+  let vw = video.videoWidth;
+  let vh = video.videoHeight;
+  
+  let canvas = document.getElementById('canvasOutput');
+  canvas.width = vw;
+  canvas.height = vh;
+
+  src = new cv.Mat(vh, vw, cv.CV_8UC4);
+  dst = new cv.Mat(vh, vw, cv.CV_8UC4);
   gray = new cv.Mat();
   edges = new cv.Mat();
   cap = new cv.VideoCapture(video);
 
-  document.getElementById('status').innerText = '枠をカメラに映してください';
+  document.getElementById('status').innerText = '枠を映し、ボタンを押してください';
   isRunning = true;
+  
+  // 判定ボタンのクリックイベントを登録
+  document.getElementById('capture-btn').addEventListener('click', handleCapture);
+  
   requestAnimationFrame(processVideo);
 }
 
-// 5. 毎フレームの画像処理ループ
+// 5. 毎フレームの画像処理ループ（ここでは枠を探すだけ）
 function processVideo() {
   if (!isRunning) return;
 
@@ -108,6 +120,7 @@ function processVideo() {
 
     let maxArea = 0;
     let bestPoly = new cv.Mat();
+    let found = false;
 
     for (let i = 0; i < contours.size(); ++i) {
       let cnt = contours.get(i);
@@ -118,24 +131,25 @@ function processVideo() {
         if (approx.rows === 4 && area > maxArea) {
           maxArea = area;
           approx.copyTo(bestPoly);
+          found = true;
         }
         approx.delete();
       }
     }
 
-    if (bestPoly.rows === 4) {
+    let btn = document.getElementById('capture-btn');
+
+    if (found) {
       let pts = Array.from(bestPoly.data32S);
       for (let i = 0; i < 4; i++) {
         cv.line(dst, new cv.Point(pts[i*2], pts[i*2+1]), new cv.Point(pts[((i+1)%4)*2], pts[((i+1)%4)*2+1]), [0, 255, 0, 255], 3);
       }
-      let corners = sortCorners(pts);
-      let warped = warpPerspective(src, corners, 400, 600);
-      
-      // クールダウン中でなければ判定処理を実行
-      if (!isCooldown) {
-        checkMatch(warped);
-      }
-      warped.delete();
+      currentCorners = sortCorners(pts);
+      // 枠が見つかっていて、かつクールダウン中でなければボタンを押せるようにする
+      if (!isCooldown) btn.disabled = false;
+    } else {
+      currentCorners = null;
+      btn.disabled = true; // 枠を見失ったらボタンを押せなくする
     }
 
     cv.imshow('canvasOutput', dst);
@@ -147,6 +161,26 @@ function processVideo() {
   }
 }
 
+// ==========================================
+// 6. 「判定する」ボタンが押された時の処理
+// ==========================================
+function handleCapture() {
+  if (!currentCorners || isCooldown) return;
+  
+  // 処理中はボタンを無効化
+  isCooldown = true;
+  document.getElementById('capture-btn').disabled = true;
+
+  // ボタンを押した瞬間の映像(src)と枠の座標(currentCorners)を使って射影変換
+  let warped = warpPerspective(src, currentCorners, 400, 600);
+  
+  // 画像の照合処理を実行
+  checkMatch(warped);
+  
+  warped.delete();
+}
+
+// コーナー並び替え関数
 function sortCorners(pts) {
   let points = [];
   for (let i = 0; i < 4; i++) points.push({x: pts[i*2], y: pts[i*2+1]});
@@ -162,6 +196,7 @@ function sortCorners(pts) {
   return [tl, tr, br, bl];
 }
 
+// 射影変換関数
 function warpPerspective(srcMat, corners, width, height) {
   let srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
     corners[0].x, corners[0].y, corners[1].x, corners[1].y,
@@ -180,74 +215,67 @@ function warpPerspective(srcMat, corners, width, height) {
   return warped;
 }
 
-// 6. 画像の照合処理（位置ズレ許容版）
+// 7. 画像の照合処理（ボタン押下時に1回だけ実行される）
 function checkMatch(warpedMat) {
   let warpedGray = new cv.Mat();
   cv.cvtColor(warpedMat, warpedGray, cv.COLOR_RGBA2GRAY);
-
-  // 切り抜く範囲(ROI)を 140x140 に広げる
-  // 元々は x:20, y:20 から 100x100 でしたが、
-  // x:0, y:0 から 140x140 の範囲を切り取ることで、上下左右に20pxの余裕を持たせます。
-  let roiRect = new cv.Rect(0, 0, 140, 140);
-  
-  // ※もし枠線の黒い部分が映り込んで邪魔になる場合は、
-  // x:5, y:5, width: 130, height: 130 のように少し内側に絞って調整してください。
+  let roiRect = new cv.Rect(0, 0, 140, 140); 
   let roi = warpedGray.roi(roiRect);
 
-  // カメラから切り抜いた画像も線画（エッジ）に変換する
   let roiEdges = new cv.Mat();
   cv.Canny(roi, roiEdges, 50, 150);
+
+  let matchFound = false;
 
   for (let i = 0; i < targetData.length; i++) {
     let target = targetData[i];
 
+    // すでに正解したものはスキップ
     if (matchedNames.has(target.name)) continue;
 
     let result = new cv.Mat();
-    // 140x140の範囲(roi)の中から、100x100の正解画像(target.mat)が
-    // どこにいるかをスライドさせながら一番一致する場所を探します
     cv.matchTemplate(roiEdges, target.mat, result, cv.TM_CCOEFF_NORMED);
-    
-    // minMaxLocで「最も一致度が高かった場所とそのスコア」を取得
     let minMax = cv.minMaxLoc(result);
     result.delete();
 
-    // 【重要】線画マッチングは判定が厳しくなるため、閾値を 0.7 から 0.5 程度に下げます
-    // ※うまく反応しない場合は 0.4 や 0.45 に調整してください
     if (minMax.maxVal > 0.5) {
       matchedNames.add(target.name);
       updateScoreUI();
-      
-      console.log(`${target.name} を発見！ スコア: ${minMax.maxVal.toFixed(3)}`);
-      showSuccessPopup(`「${target.name}」を発見！`);
+      showSuccessPopup(`「${target.name}」を発見！`, true);
+      matchFound = true;
       break; 
     }
   }
-  warpedGray.delete(); 
-  roiEdges.delete();
+
+  // もしどの画像とも一致しなかった場合の処理
+  if (!matchFound) {
+    showSuccessPopup('一致する画像がありません', false);
+  }
+
+  warpedGray.delete(); roi.delete(); roiEdges.delete();
 }
 
-// HTMLのスコア表示を更新する関数
 function updateScoreUI() {
   document.getElementById('score-board').innerText = `正解数: ${matchedNames.size} / ${totalTargets}`;
 }
 
-// 画面中央にテキストを表示し、一時的に判定をストップさせる関数
-function showSuccessPopup(message) {
-  isCooldown = true; // 連続判定をストップ
+// 成功・失敗のポップアップ表示（色を分けてわかりやすく）
+function showSuccessPopup(message, isSuccess) {
   let ui = document.getElementById('success-ui');
   ui.innerText = message;
+  
+  // 成功時は緑、失敗時は赤にする
+  ui.style.background = isSuccess ? 'rgba(76, 175, 80, 0.9)' : 'rgba(244, 67, 54, 0.9)';
   ui.style.display = 'block';
 
-  // 全ての画像をコンプリートした場合
-  if (matchedNames.size === totalTargets) {
+  if (matchedNames.size === totalTargets && isSuccess) {
     ui.innerText = "すべての画像を見つけました！クリア！";
-    return; // クールダウンを解除せずそのまま終了
+    return; 
   }
 
-  // 3秒後にポップアップを消し、判定を再開する
+  // 2秒後にポップアップを消す
   setTimeout(() => {
     ui.style.display = 'none';
     isCooldown = false; 
-  }, 3000);
+  }, 2000);
 }
