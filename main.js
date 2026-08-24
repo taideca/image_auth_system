@@ -63,109 +63,125 @@ function loadImageAsMat(url) {
 // 3. カメラの起動
 function startCamera() {
   video = document.getElementById('videoInput');
-  // 理想の解像度を指定し、スマホの縦横に柔軟に対応させる
+  // スマホ(特にiPhone)でカメラを確実に動かすため、JSからも属性を強制付与
+  video.setAttribute('autoplay', '');
+  video.setAttribute('muted', '');
+  video.setAttribute('playsinline', '');
+
   navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
     .then(function(stream) {
       video.srcObject = stream;
-      video.play();
       
-      // 動画のメタデータが読み込まれたら
-      video.onloadedmetadata = () => {
-        // スマホによっては videoWidth がすぐに取得できないため、取得できるまで待機する
+      // 再生が開始されたことを確実に検知してから処理に進む
+      video.play().then(() => {
         let checkVideoSize = setInterval(() => {
           if (video.videoWidth > 0 && video.videoHeight > 0) {
             clearInterval(checkVideoSize);
-            initOpenCV(); // サイズが確定したら初期化スタート
+            initOpenCV();
           }
         }, 100);
-      };
+      }).catch(err => {
+        document.getElementById('status').innerText = '動画の再生がブロックされました: ' + err;
+      });
     })
     .catch(function(err) {
       document.getElementById('status').innerText = 'カメラのアクセスに失敗しました';
-      console.error(err);
     });
 }
 
-// 4. 画像処理変数の初期化とループ開始
+// 4. 画像処理変数の初期化
 function initOpenCV() {
-  // カメラが実際に取得した解像度を取得（縦伸び・横伸びを防止）
-  let vw = video.videoWidth;
-  let vh = video.videoHeight;
-  
-  let canvas = document.getElementById('canvasOutput');
-  canvas.width = vw;
-  canvas.height = vh;
-
-  src = new cv.Mat(vh, vw, cv.CV_8UC4);
-  dst = new cv.Mat(vh, vw, cv.CV_8UC4);
-  gray = new cv.Mat();
-  edges = new cv.Mat();
-  cap = new cv.VideoCapture(video);
-
-  document.getElementById('status').innerText = '枠を映し、ボタンを押してください';
-  isRunning = true;
-  
-  // 判定ボタンのクリックイベントを登録
-  document.getElementById('capture-btn').addEventListener('click', handleCapture);
-  
-  requestAnimationFrame(processVideo);
-}
-
-// 5. 毎フレームの画像処理ループ（ここでは枠を探すだけ）
-function processVideo() {
-  if (!isRunning) return;
-
   try {
-    cap.read(src);
-    src.copyTo(dst);
+    let vw = video.videoWidth;
+    let vh = video.videoHeight;
+    
+    let canvas = document.getElementById('canvasOutput');
+    canvas.width = vw;
+    canvas.height = vh;
 
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.Canny(gray, edges, 75, 200);
+    src = new cv.Mat(vh, vw, cv.CV_8UC4);
+    dst = new cv.Mat(vh, vw, cv.CV_8UC4);
+    gray = new cv.Mat();
+    edges = new cv.Mat();
+    cap = new cv.VideoCapture(video);
 
-    let contours = new cv.MatVector();
-    let hierarchy = new cv.Mat();
-    cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-    let maxArea = 0;
-    let bestPoly = new cv.Mat();
-    let found = false;
-
-    for (let i = 0; i < contours.size(); ++i) {
-      let cnt = contours.get(i);
-      let area = cv.contourArea(cnt);
-      if (area > 20000) {
-        let approx = new cv.Mat();
-        cv.approxPolyDP(cnt, approx, 0.02 * cv.arcLength(cnt, true), true);
-        if (approx.rows === 4 && area > maxArea) {
-          maxArea = area;
-          approx.copyTo(bestPoly);
-          found = true;
-        }
-        approx.delete();
-      }
-    }
-
-    let btn = document.getElementById('capture-btn');
-
-    if (found) {
-      let pts = Array.from(bestPoly.data32S);
-      for (let i = 0; i < 4; i++) {
-        cv.line(dst, new cv.Point(pts[i*2], pts[i*2+1]), new cv.Point(pts[((i+1)%4)*2], pts[((i+1)%4)*2+1]), [0, 255, 0, 255], 3);
-      }
-      currentCorners = sortCorners(pts);
-      // 枠が見つかっていて、かつクールダウン中でなければボタンを押せるようにする
-      if (!isCooldown) btn.disabled = false;
-    } else {
-      currentCorners = null;
-      btn.disabled = true; // 枠を見失ったらボタンを押せなくする
-    }
-
-    cv.imshow('canvasOutput', dst);
-    bestPoly.delete(); contours.delete(); hierarchy.delete();
+    document.getElementById('status').innerText = '枠を映し、ボタンを押してください';
+    isRunning = true;
+    
+    document.getElementById('capture-btn').addEventListener('click', handleCapture);
     
     requestAnimationFrame(processVideo);
   } catch (err) {
+    document.getElementById('status').innerText = '初期化エラー: ' + err;
+  }
+}
+
+// 5. 毎フレームの画像処理ループ（★フリーズ防止の安全装置を追加）
+function processVideo() {
+  if (!isRunning) return;
+
+  // 毎回生成する変数は try-catch の外に出して、エラー時も必ずメモリ解放できるようにする
+  let contours = new cv.MatVector();
+  let hierarchy = new cv.Mat();
+  let bestPoly = new cv.Mat();
+
+  try {
+    cap.read(src);
+
+    // 【重要】もし映像が空（一瞬の読み込み遅れなど）の場合は、処理をスキップしてフリーズを防ぐ
+    if (!src.empty()) {
+      src.copyTo(dst);
+
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+      cv.Canny(gray, edges, 75, 200);
+
+      cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+      let maxArea = 0;
+      let found = false;
+
+      for (let i = 0; i < contours.size(); ++i) {
+        let cnt = contours.get(i);
+        let area = cv.contourArea(cnt);
+        if (area > 20000) { // 面積の閾値
+          let approx = new cv.Mat();
+          cv.approxPolyDP(cnt, approx, 0.02 * cv.arcLength(cnt, true), true);
+          if (approx.rows === 4 && area > maxArea) {
+            maxArea = area;
+            approx.copyTo(bestPoly);
+            found = true;
+          }
+          approx.delete();
+        }
+      }
+
+      let btn = document.getElementById('capture-btn');
+
+      if (found) {
+        let pts = Array.from(bestPoly.data32S);
+        for (let i = 0; i < 4; i++) {
+          cv.line(dst, new cv.Point(pts[i*2], pts[i*2+1]), new cv.Point(pts[((i+1)%4)*2], pts[((i+1)%4)*2+1]), [0, 255, 0, 255], 3);
+        }
+        currentCorners = sortCorners(pts);
+        if (!isCooldown) btn.disabled = false;
+      } else {
+        currentCorners = null;
+        btn.disabled = true;
+      }
+
+      // 画面に描画
+      cv.imshow('canvasOutput', dst);
+    }
+  } catch (err) {
+    // もしエラーが起きても、画面上部に内容を表示してプログラム自体は止めない
     console.error(err);
+    document.getElementById('status').innerText = 'カメラ処理中エラー: ' + err.message;
+  } finally {
+    // 正常でもエラーでも、必ずメモリを解放して次のフレームを呼び出す（絶対フリーズさせない）
+    bestPoly.delete(); 
+    contours.delete(); 
+    hierarchy.delete();
+    requestAnimationFrame(processVideo);
   }
 }
 
