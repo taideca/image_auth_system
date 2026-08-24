@@ -89,12 +89,16 @@ function startCamera() {
     });
 }
 
-// 4. 画像処理変数の初期化
+// 4. 画像処理変数の初期化とループ開始
 function initOpenCV() {
   try {
     let vw = video.videoWidth;
     let vh = video.videoHeight;
     
+    // videoタグ自体に明示的なサイズを強制指定する（これがないとOpenCVがエラーを吐く）
+    video.width = vw;
+    video.height = vh;
+
     let canvas = document.getElementById('canvasOutput');
     canvas.width = vw;
     canvas.height = vh;
@@ -108,7 +112,10 @@ function initOpenCV() {
     document.getElementById('status').innerText = '枠を映し、ボタンを押してください';
     isRunning = true;
     
-    document.getElementById('capture-btn').addEventListener('click', handleCapture);
+    // ボタンのイベントが二重登録されるのを防ぐ
+    let btn = document.getElementById('capture-btn');
+    btn.removeEventListener('click', handleCapture);
+    btn.addEventListener('click', handleCapture);
     
     requestAnimationFrame(processVideo);
   } catch (err) {
@@ -116,11 +123,22 @@ function initOpenCV() {
   }
 }
 
-// 5. 毎フレームの画像処理ループ（★フリーズ防止の安全装置を追加）
+// 5. 毎フレームの画像処理ループ
 function processVideo() {
   if (!isRunning) return;
 
-  // 毎回生成する変数は try-catch の外に出して、エラー時も必ずメモリ解放できるようにする
+  // カメラの解像度が途中で変動した場合の「自動復旧システム」
+  if (video.videoWidth > 0 && (video.videoWidth !== src.cols || video.videoHeight !== src.rows)) {
+    console.log("解像度の変動を検知。サイズを再調整します。");
+    video.width = video.videoWidth;
+    video.height = video.videoHeight;
+    src.delete(); dst.delete();
+    src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+    dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+    document.getElementById('canvasOutput').width = video.videoWidth;
+    document.getElementById('canvasOutput').height = video.videoHeight;
+  }
+
   let contours = new cv.MatVector();
   let hierarchy = new cv.Mat();
   let bestPoly = new cv.Mat();
@@ -128,7 +146,6 @@ function processVideo() {
   try {
     cap.read(src);
 
-    // 【重要】もし映像が空（一瞬の読み込み遅れなど）の場合は、処理をスキップしてフリーズを防ぐ
     if (!src.empty()) {
       src.copyTo(dst);
 
@@ -143,7 +160,7 @@ function processVideo() {
       for (let i = 0; i < contours.size(); ++i) {
         let cnt = contours.get(i);
         let area = cv.contourArea(cnt);
-        if (area > 20000) { // 面積の閾値
+        if (area > 20000) { 
           let approx = new cv.Mat();
           cv.approxPolyDP(cnt, approx, 0.02 * cv.arcLength(cnt, true), true);
           if (approx.rows === 4 && area > maxArea) {
@@ -169,22 +186,23 @@ function processVideo() {
         btn.disabled = true;
       }
 
-      // 画面に描画
       cv.imshow('canvasOutput', dst);
+      
+      // エラー表示が出ていた場合、正常に動いたら消去する
+      if (document.getElementById('status').innerText.includes('エラー')) {
+         document.getElementById('status').innerText = '枠を映し、ボタンを押してください';
+      }
     }
   } catch (err) {
-    // もしエラーが起きても、画面上部に内容を表示してプログラム自体は止めない
     console.error(err);
     document.getElementById('status').innerText = 'カメラ処理中エラー: ' + err.message;
   } finally {
-    // 正常でもエラーでも、必ずメモリを解放して次のフレームを呼び出す（絶対フリーズさせない）
     bestPoly.delete(); 
     contours.delete(); 
     hierarchy.delete();
     requestAnimationFrame(processVideo);
   }
 }
-
 // ==========================================
 // 6. 「判定する」ボタンが押された時の処理
 // ==========================================
